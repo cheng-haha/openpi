@@ -1,72 +1,94 @@
+import pathlib
 import sys
-sys.path.append("./")
+import threading
+import time
+from typing import Literal
+from typing import Union
 
 import cv2
 import numpy as np
-import rerun as rr
-import threading
-import time
-from typing import Union
-from robot.imeta_y1 import Y1Controller
-from camera.orbbec_camera import OrbbecCamera
-from camera.v4l2_camera import V4l2Camera
 
-# setting your camera serial number
-Orbbec_CAMERA_SERIALS = {
-    # Replace with actual serial number
-    'cam_high': 'CH8R554001M',
-    'cam_left_wrist': 'CH8G65200Z9',
-    'cam_right_wrist': 'CH8G65200Y4',
+sys.path.append("./")
+sys.path.append(str(pathlib.Path(__file__).resolve().parents[2]))
+sys.path.append(str(pathlib.Path(__file__).resolve().parent))
+
+# Default mapping for this robot workstation.
+DEFAULT_CAMERA_SERIALS = {
+    "cam_high": "CH8R554001M",
+    "cam_left_wrist": "CH8G65200Z9",
+    "cam_right_wrist": "CH8G65200Y4",
 }
 
-V4l2_CAMERA_DEV = {
+DEFAULT_V4L2_CAMERA_DEVICES = {
     "cam_high": "/dev/cam_high",
     "cam_left_wrist": "/dev/cam_left_wrist",
     "cam_right_wrist": "/dev/cam_right_wrist",
 }
 
-# fix can id 
-ARM_CAN_DEV = {
+DEFAULT_ARM_CAN_IDS = {
     "left_arm": "can0",
     "right_arm": "can1",
 }
+
 
 class RealRobotEnv:
     def __init__(
         self,
         single_arm: bool,
-        cam_names: list,
+        cam_names: list[str],
         visual: bool = False,
-        camera_type: str = "v4l2",
+        camera_type: Literal["orbbec", "v4l2"] = "v4l2",
         visual_fps: float = 30.0,
+        camera_devices: dict[str, str] | None = None,
+        camera_serials: dict[str, str] | None = None,
+        arm_can_ids: dict[str, str] | None = None,
     ):
         self.single_arm = single_arm
         self.camera_names = cam_names
         self.camera_type = camera_type
         self.visual = visual
         self.visual_fps = visual_fps
+        self.camera_devices = camera_devices or DEFAULT_V4L2_CAMERA_DEVICES
+        self.camera_serials = camera_serials or DEFAULT_CAMERA_SERIALS
+        self.arm_can_ids = arm_can_ids or DEFAULT_ARM_CAN_IDS
         self._visualizer_running = False
         self._visualizer_thread = None
         self._visualizer_step = 0
+        self._rr = None
 
         arm_names = ["right_arm"] if self.single_arm else ["left_arm", "right_arm"]
-        self.controllers = {
-            "arm": {arm_name: Y1Controller(arm_name) for arm_name in arm_names}
-        }
+        self.controllers = {"arm": {arm_name: self._create_controller(arm_name) for arm_name in arm_names}}
 
+        self.cameras = {"images": {}}
+        for cam_name in self.camera_names:
+            self.cameras["images"][cam_name] = self._create_camera(cam_name)
+
+    def _create_controller(self, name: str):
+        try:
+            from scripts.inference_python.robot.imeta_y1 import Y1Controller
+        except ModuleNotFoundError:
+            from robot.imeta_y1 import Y1Controller
+
+        return Y1Controller(name)
+
+    def _create_camera(self, cam_name: str):
         if self.camera_type == "orbbec":
-            camera_cls = OrbbecCamera
-            self.camera_devices = Orbbec_CAMERA_SERIALS
-        elif self.camera_type == "v4l2":
-            camera_cls = V4l2Camera
-            self.camera_devices = V4l2_CAMERA_DEV
-        else:
-            raise ValueError(f"Unsupported camera_type: {self.camera_type}")
+            try:
+                from scripts.inference_python.camera.orbbec_camera import OrbbecCamera
+            except ModuleNotFoundError:
+                from camera.orbbec_camera import OrbbecCamera
 
-        self.cameras = {
-            # Keep OpenCV preview inside camera classes for manual debugging only.
-            "images": {cam_name: camera_cls(cam_name, visual=False) for cam_name in self.camera_names}
-        }
+            return OrbbecCamera(cam_name, visual=False)
+
+        if self.camera_type == "v4l2":
+            try:
+                from scripts.inference_python.camera.v4l2_camera import V4l2Camera
+            except ModuleNotFoundError:
+                from camera.v4l2_camera import V4l2Camera
+
+            return V4l2Camera(cam_name, visual=False)
+
+        raise ValueError(f"Unsupported camera_type: {self.camera_type}")
 
     def _compose_display_image(self, frames: dict[str, np.ndarray]):
         display_order = ["cam_left_wrist", "cam_high", "cam_right_wrist"]
@@ -93,15 +115,22 @@ class RealRobotEnv:
             resized_frames.append(frame)
 
         return np.concatenate(resized_frames, axis=1)
-        
+
     def set_up(self, teleop=False):
         for arm_name, controller in self.controllers["arm"].items():
-            controller.set_up(ARM_CAN_DEV[arm_name], teleop=teleop)
+            if arm_name not in self.arm_can_ids:
+                raise RuntimeError(f"Missing CAN id for {arm_name}")
+            controller.set_up(self.arm_can_ids[arm_name], teleop=teleop)
 
         for cam_name, camera in self.cameras["images"].items():
-            if cam_name not in self.camera_devices:
-                raise RuntimeError(f"Not find device config for camera {cam_name}!")
-            camera.set_up(self.camera_devices[cam_name])
+            if self.camera_type == "orbbec":
+                if cam_name not in self.camera_serials:
+                    raise RuntimeError(f"Missing Orbbec serial for camera {cam_name}")
+                camera.set_up(self.camera_serials[cam_name])
+            else:
+                if cam_name not in self.camera_devices:
+                    raise RuntimeError(f"Missing V4L2 device for camera {cam_name}")
+                camera.set_up(self.camera_devices[cam_name])
 
         if self.visual:
             self.start_visualizer()
@@ -111,6 +140,9 @@ class RealRobotEnv:
         if self._visualizer_running:
             return
 
+        import rerun as rr
+
+        self._rr = rr
         rr.init("openpi_real_robot_inference", spawn=True)
         self._visualizer_running = True
         self._visualizer_thread = threading.Thread(
@@ -122,6 +154,10 @@ class RealRobotEnv:
         print(f"rerun visualizer started at {self.visual_fps:.1f} FPS")
 
     def _visualizer_loop(self):
+        rr = self._rr
+        if rr is None:
+            return
+
         sleep_time = 1.0 / self.visual_fps if self.visual_fps > 0 else 0.0
         while self._visualizer_running:
             try:
@@ -151,41 +187,42 @@ class RealRobotEnv:
                 self._visualizer_running = False
                 print(f"visualizer stopped: {exc}")
                 break
-    
+
     def get_observation(self):
         observation = {}
-    
-        # state
+
         if "arm" in self.controllers:
             arm_controller = self.controllers["arm"]
             if len(arm_controller) == 1:
-               # single arm, default right arm
-               right_arm_state = arm_controller["right_arm"].get_state()
-               observation["state"] = np.concatenate([right_arm_state["joint_position"], 
-                                                    [right_arm_state["gripper"]]])
-
+                right_arm_state = arm_controller["right_arm"].get_state()
+                observation["state"] = np.concatenate(
+                    [
+                        right_arm_state["joint_position"],
+                        [right_arm_state["gripper"]],
+                    ]
+                )
             elif len(arm_controller) == 2:
-                # dual arm
                 left_arm_state = arm_controller["left_arm"].get_state()
                 right_arm_state = arm_controller["right_arm"].get_state()
-                
-                # 合并左臂的关节位置和夹爪
-                left_joint_and_gripper = np.concatenate([left_arm_state["joint_position"], 
-                                                        [left_arm_state["gripper"]]])
-                # 合并右臂的关节位置和夹爪
-                right_joint_and_gripper = np.concatenate([right_arm_state["joint_position"], 
-                                                        [right_arm_state["gripper"]]])
-                # 连接双臂的数据
-                observation["state"] = np.concatenate([left_joint_and_gripper, 
-                                                        right_joint_and_gripper])
-                
+
+                left_joint_and_gripper = np.concatenate(
+                    [
+                        left_arm_state["joint_position"],
+                        [left_arm_state["gripper"]],
+                    ]
+                )
+                right_joint_and_gripper = np.concatenate(
+                    [
+                        right_arm_state["joint_position"],
+                        [right_arm_state["gripper"]],
+                    ]
+                )
+                observation["state"] = np.concatenate([left_joint_and_gripper, right_joint_and_gripper])
             else:
                 raise RuntimeError(f"arm controller size is {len(arm_controller)}")
-                           
         else:
             raise RuntimeError("Not find arm controller!")
-                                           
-        # image
+
         camere_images = self.cameras["images"]
         images = {}
         for cam_name in self.camera_names:
@@ -204,30 +241,24 @@ class RealRobotEnv:
                 return None
 
             images[cam_name] = np.transpose(image, (2, 0, 1))
-        
+
         observation["images"] = images
-        
         return observation
-    
+
     def step(self, action: Union[list, np.ndarray]):
         if self.single_arm:
             assert len(action) >= 7
-            
-            # single arm, default right arm
+
             right_arm_controller = self.controllers["arm"]["right_arm"]
             right_arm_controller.set_joint_position(action[0:6])
             right_arm_controller.set_gripper(action[6])
-            # right_arm_controller.set_joint_position_control(action[0:7])
-
         else:
             assert len(action) >= 14
 
-            # action[0:6]  -> left arm control
             left_arm_controller = self.controllers["arm"]["left_arm"]
             left_arm_controller.set_joint_position(action[0:6])
             left_arm_controller.set_gripper(action[6])
 
-            # action[7:13] -> right arm control
             right_arm_controller = self.controllers["arm"]["right_arm"]
             right_arm_controller.set_joint_position(action[7:13])
             right_arm_controller.set_gripper(action[13])
@@ -246,6 +277,7 @@ class RealRobotEnv:
                 camera.stop()
             except BaseException:
                 pass
+
 
 if __name__ == "__main__":
     env = RealRobotEnv(single_arm=False, cam_names=["cam_high", "cam_right_wrist", "cam_left_wrist"], visual=True)
