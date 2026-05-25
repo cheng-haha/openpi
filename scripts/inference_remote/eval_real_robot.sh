@@ -18,9 +18,10 @@ SINGLE_ARM="${SINGLE_ARM:-0}"
 ACTION_HORIZON="${ACTION_HORIZON:-30}"
 CONTROL_RATE_HZ="${CONTROL_RATE_HZ:-30}"
 MAX_EPISODE_STEPS="${MAX_EPISODE_STEPS:-1000}"
-CAMERA_TYPE="${CAMERA_TYPE:-v4l2}"
+CAMERA_TYPE="${CAMERA_TYPE:-ros2}"
 CAMERA_DEVICES="${CAMERA_DEVICES:-}"
 CAMERA_SERIALS="${CAMERA_SERIALS:-}"
+CAMERA_TOPICS="${CAMERA_TOPICS:-}"
 ARM_CAN_IDS="${ARM_CAN_IDS:-}"
 
 if [ "$SINGLE_ARM" = "1" ]; then
@@ -54,6 +55,10 @@ done
 
 for pair in $CAMERA_SERIALS; do
   CMD+=(--camera-serials "$pair")
+done
+
+for pair in $CAMERA_TOPICS; do
+  CMD+=(--camera-topics "$pair")
 done
 
 for pair in $ARM_CAN_IDS; do

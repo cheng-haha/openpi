@@ -8,6 +8,8 @@
 - `src/openpi/training/config.py`
 - `scripts/compute_norm_stats.py`
 
+环境创建见 [01_openpi_environment_setup.md](01_openpi_environment_setup.md)。训练流程见 [04_imeta_y1_training.md](04_imeta_y1_training.md)。
+
 ## 1. 原始数据要求
 
 预处理输入是 `data_collection` 采集出的 `episode_*.hdf5` 文件。每个 episode 至少需要包含：
@@ -25,6 +27,19 @@ root.attrs["task"]
 - `action`: 训练目标动作，单臂 7 维，双臂 14 维。
 - `observation/images/<camera_name>`: 每帧压缩图像字节。
 - `task`: 每条 episode 的语言指令，后续会写入 LeRobot 的 `task` 字段并作为训练 prompt。
+
+当前 `data_collection` 的图像采集链路是 ROS2 `usb_cam`，不是 openpi 里的 V4L2 直连类：
+
+```text
+start_y1_cameras_tmux.sh
+  -> ros2 run usb_cam usb_cam_node_exe
+  -> /camera_right/color/image_raw
+  -> /camera_left/color/image_raw
+  -> /camera_high/color/image_raw
+  -> data_collection 订阅 topic，转 rgb8，再 JPEG 压缩写入 HDF5
+```
+
+`start_y1_cameras_tmux.sh` 默认会设置 `640x480`、`60fps`、`pixel_format=yuyv`、自动曝光、自动白平衡、亮度、电源频率等相机参数。后续推理最好复用同一条 ROS2 topic 链路，避免训推图像在曝光、白平衡、对比度、颜色空间和压缩方式上不一致。
 
 维度顺序必须和推理时一致：
 
@@ -75,6 +90,8 @@ pip install uv
 ```bash
 export HF_LEROBOT_HOME=/home/ubuntu/projects/y1_robot/lerobot_dataset
 ```
+
+注意：当前转换脚本如果发现 `HF_LEROBOT_HOME/<repo_id>` 已存在，会先删除旧目录再重新生成。因此重复使用同一个 `repo_id` 前，确认旧数据不需要保留。
 
 ### 单臂数据
 
@@ -127,6 +144,8 @@ cam_right_wrist
 - 转换脚本参数 `--config.cam-names`
 - `src/openpi/training/config.py` 中对应 config 的 `images` 映射
 - 真机推理脚本中的相机名或设备映射
+
+PDF 里建议单臂按双相机配置、双臂按“两只腕部相机 + 一个外部相机”配置。相机数量可以减少，但训练、推理、数据转换三处名称必须一致。
 
 ## 3. 转换后检查
 

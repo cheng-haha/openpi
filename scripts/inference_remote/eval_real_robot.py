@@ -13,6 +13,7 @@ import tyro
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[2]))
 
 from scripts.inference_python.real_robot_env import DEFAULT_ARM_CAN_IDS
+from scripts.inference_python.real_robot_env import DEFAULT_ROS2_CAMERA_TOPICS
 from scripts.inference_python.real_robot_env import DEFAULT_V4L2_CAMERA_DEVICES
 from scripts.inference_python.real_robot_env import RealRobotEnv
 
@@ -40,7 +41,7 @@ class Args:
     prompt: str | None = None
 
     single_arm: bool = False
-    camera_type: str = "v4l2"
+    camera_type: str = "ros2"
     cam_names: list[str] | None = None
 
     action_horizon: int = 30
@@ -53,6 +54,7 @@ class Args:
     reset_joints: list[float] | None = None
     camera_devices: list[str] | None = None
     camera_serials: list[str] | None = None
+    camera_topics: list[str] | None = None
     arm_can_ids: list[str] | None = None
 
 
@@ -79,6 +81,8 @@ def main(args: Args) -> None:
     cam_names = args.cam_names or _default_camera_names(args.single_arm)
     camera_devices = dict(DEFAULT_V4L2_CAMERA_DEVICES)
     camera_devices.update(_parse_kv_pairs(args.camera_devices))
+    camera_topics = dict(DEFAULT_ROS2_CAMERA_TOPICS)
+    camera_topics.update(_parse_kv_pairs(args.camera_topics))
     arm_can_ids = dict(DEFAULT_ARM_CAN_IDS)
     arm_can_ids.update(_parse_kv_pairs(args.arm_can_ids))
 
@@ -88,6 +92,7 @@ def main(args: Args) -> None:
         camera_type=args.camera_type,
         camera_devices=camera_devices,
         camera_serials=_parse_kv_pairs(args.camera_serials),
+        camera_topics=camera_topics,
         arm_can_ids=arm_can_ids,
     )
     env.set_up()

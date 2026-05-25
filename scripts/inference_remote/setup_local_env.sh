@@ -14,7 +14,7 @@ conda run -n "$ENV_NAME" python -m pip install --upgrade pip uv
 conda run -n "$ENV_NAME" python -m pip install "numpy<2" "opencv-python<4.11" tyro pybind11 v4l2
 conda run -n "$ENV_NAME" python -m pip install -e "$ROOT_DIR/packages/openpi-client"
 conda run -n "$ENV_NAME" python -m pip install -e "$ROOT_DIR/../y1_sdk_python/y1_sdk"
-conda run -n "$ENV_NAME" bash -lc 'source /opt/ros/humble/setup.bash && python -c "import openpi_client, v4l2, y1_sdk; print(\"import check ok\")"'
+conda run -n "$ENV_NAME" bash -lc 'source /opt/ros/humble/setup.bash && python -c "import openpi_client, v4l2, y1_sdk, rclpy, cv_bridge; print(\"import check ok\")"'
 
 cat <<EOF
 
@@ -26,6 +26,6 @@ Activate:
 Run client:
   cd $ROOT_DIR
   source /opt/ros/humble/setup.bash
-  PROMPT="replace_with_your_task" bash scripts/inference_remote/eval_real_robot.sh
+  CAMERA_TYPE=ros2 PROMPT="replace_with_your_task" bash scripts/inference_remote/eval_real_robot.sh
 
 EOF

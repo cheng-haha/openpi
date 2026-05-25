@@ -25,6 +25,12 @@ DEFAULT_V4L2_CAMERA_DEVICES = {
     "cam_right_wrist": "/dev/cam_right_wrist",
 }
 
+DEFAULT_ROS2_CAMERA_TOPICS = {
+    "cam_high": "/camera_high/color/image_raw",
+    "cam_left_wrist": "/camera_left/color/image_raw",
+    "cam_right_wrist": "/camera_right/color/image_raw",
+}
+
 DEFAULT_ARM_CAN_IDS = {
     "left_arm": "can0",
     "right_arm": "can1",
@@ -37,10 +43,11 @@ class RealRobotEnv:
         single_arm: bool,
         cam_names: list[str],
         visual: bool = False,
-        camera_type: Literal["orbbec", "v4l2"] = "v4l2",
+        camera_type: Literal["orbbec", "v4l2", "ros2"] = "v4l2",
         visual_fps: float = 30.0,
         camera_devices: dict[str, str] | None = None,
         camera_serials: dict[str, str] | None = None,
+        camera_topics: dict[str, str] | None = None,
         arm_can_ids: dict[str, str] | None = None,
     ):
         self.single_arm = single_arm
@@ -50,6 +57,7 @@ class RealRobotEnv:
         self.visual_fps = visual_fps
         self.camera_devices = camera_devices or DEFAULT_V4L2_CAMERA_DEVICES
         self.camera_serials = camera_serials or DEFAULT_CAMERA_SERIALS
+        self.camera_topics = camera_topics or DEFAULT_ROS2_CAMERA_TOPICS
         self.arm_can_ids = arm_can_ids or DEFAULT_ARM_CAN_IDS
         self._visualizer_running = False
         self._visualizer_thread = None
@@ -87,6 +95,14 @@ class RealRobotEnv:
                 from camera.v4l2_camera import V4l2Camera
 
             return V4l2Camera(cam_name, visual=False)
+
+        if self.camera_type == "ros2":
+            try:
+                from scripts.inference_python.camera.ros2_topic_camera import Ros2TopicCamera
+            except ModuleNotFoundError:
+                from camera.ros2_topic_camera import Ros2TopicCamera
+
+            return Ros2TopicCamera(cam_name, visual=False)
 
         raise ValueError(f"Unsupported camera_type: {self.camera_type}")
 
@@ -127,10 +143,16 @@ class RealRobotEnv:
                 if cam_name not in self.camera_serials:
                     raise RuntimeError(f"Missing Orbbec serial for camera {cam_name}")
                 camera.set_up(self.camera_serials[cam_name])
-            else:
+            elif self.camera_type == "v4l2":
                 if cam_name not in self.camera_devices:
                     raise RuntimeError(f"Missing V4L2 device for camera {cam_name}")
                 camera.set_up(self.camera_devices[cam_name])
+            elif self.camera_type == "ros2":
+                if cam_name not in self.camera_topics:
+                    raise RuntimeError(f"Missing ROS2 topic for camera {cam_name}")
+                camera.set_up(self.camera_topics[cam_name])
+            else:
+                raise ValueError(f"Unsupported camera_type: {self.camera_type}")
 
         if self.visual:
             self.start_visualizer()
