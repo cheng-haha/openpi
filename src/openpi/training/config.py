@@ -1105,7 +1105,110 @@ _CONFIGS = [
         batch_size=32,  # the total batch_size not pre_gpu batch_size
         fsdp_devices=1,
     ),
+    TrainConfig(
+        name="pi05_base_full_dual_arm_stack_bowls_basket",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LeRobotAlohaDataConfig(
+            repo_id="openpi/stack_bowls_basket",
+            use_delta_joint_actions=False,
+            adapt_to_pi=False,
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "cam_high": "observation.images.cam_high",
+                                "cam_left_wrist": "observation.images.cam_left_wrist",
+                                "cam_right_wrist": "observation.images.cam_right_wrist",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
+            base_config=DataConfig(
+                prompt_from_task=True,
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        num_train_steps=30000,
+        save_interval=5000,
+        keep_period=10000,
+        batch_size=32,
+        fsdp_devices=4,
+    ),
+    TrainConfig(
+        name="pi05_base_full_dual_arm_y1_mixed_20260526",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LeRobotAlohaDataConfig(
+            repo_id="openpi/y1_dual_arm_mixed_20260526",
+            use_delta_joint_actions=False,
+            adapt_to_pi=False,
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "cam_high": "observation.images.cam_high",
+                                "cam_left_wrist": "observation.images.cam_left_wrist",
+                                "cam_right_wrist": "observation.images.cam_right_wrist",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
+            base_config=DataConfig(
+                prompt_from_task=True,
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        num_train_steps=30000,
+        save_interval=5000,
+        keep_period=10000,
+        batch_size=32,
+        fsdp_devices=4,
+    ),
     ### RTC inference
+    TrainConfig(
+        name="pi05_rtc_stack_bowls_basket",
+        model=pi0_config.Pi0RTCConfig(pi05=True),
+        data=LeRobotAlohaDataConfig(
+            repo_id="openpi/stack_bowls_basket",
+            use_delta_joint_actions=False,
+            adapt_to_pi=False,
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "cam_high": "observation.images.cam_high",
+                                "cam_left_wrist": "observation.images.cam_left_wrist",
+                                "cam_right_wrist": "observation.images.cam_right_wrist",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
+            base_config=DataConfig(
+                prompt_from_task=True,
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        num_train_steps=30000,
+        save_interval=5000,
+        keep_period=10000,
+        batch_size=32,
+        fsdp_devices=1,
+    ),
+
     # pi05 RTC inference
     TrainConfig(
         name="pi05_rtc_inference_dual_arm",

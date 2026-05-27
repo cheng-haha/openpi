@@ -4,6 +4,8 @@ import pathlib
 import sys
 import time
 from pprint import pformat
+from urllib.parse import urlparse
+from urllib.parse import urlunparse
 
 import numpy as np
 from openpi_client import image_tools
@@ -34,10 +36,20 @@ def _default_camera_names(single_arm: bool) -> list[str]:
     return ["cam_high", "cam_left_wrist", "cam_right_wrist"]
 
 
+def _as_websocket_url(address: str) -> str:
+    parsed = urlparse(address)
+    if parsed.scheme == "http":
+        return urlunparse(parsed._replace(scheme="ws"))
+    if parsed.scheme == "https":
+        return urlunparse(parsed._replace(scheme="wss"))
+    return address
+
+
 @dataclasses.dataclass
 class Args:
     host: str = "127.0.0.1"
     port: int = 8000
+    server: str | None = None
     prompt: str | None = None
 
     single_arm: bool = False
@@ -97,7 +109,10 @@ def main(args: Args) -> None:
     )
     env.set_up()
 
-    policy = websocket_client_policy.WebsocketClientPolicy(host=args.host, port=args.port)
+    if args.server:
+        policy = websocket_client_policy.WebsocketClientPolicy(host=_as_websocket_url(args.server), port=None)
+    else:
+        policy = websocket_client_policy.WebsocketClientPolicy(host=args.host, port=args.port)
     metadata = policy.get_server_metadata()
     logging.info("Connected to remote server, metadata: %s", metadata)
 

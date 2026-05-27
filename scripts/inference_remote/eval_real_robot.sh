@@ -9,10 +9,14 @@ if [ ! -f "$ROS_SETUP" ]; then
   echo "ROS setup not found: $ROS_SETUP" >&2
   exit 1
 fi
+set +u
+# shellcheck disable=SC1090
 source "$ROS_SETUP"
+set -u
 
 SERVER_HOST="${SERVER_HOST:-127.0.0.1}"
 SERVER_PORT="${SERVER_PORT:-8000}"
+SERVER_URL="${SERVER_URL:-}"
 PROMPT="${PROMPT:-}"
 SINGLE_ARM="${SINGLE_ARM:-0}"
 ACTION_HORIZON="${ACTION_HORIZON:-30}"
@@ -34,17 +38,21 @@ fi
 
 CMD=(
   python scripts/inference_remote/eval_real_robot.py
-  --host "$SERVER_HOST"
-  --port "$SERVER_PORT"
   --prompt "$PROMPT"
   "${SINGLE_ARM_ARGS[@]}"
   --camera-type "$CAMERA_TYPE"
   --action-horizon "$ACTION_HORIZON"
   --control-rate-hz "$CONTROL_RATE_HZ"
   --max-episode-steps "$MAX_EPISODE_STEPS"
-  --cam-names
 )
 
+if [ -n "$SERVER_URL" ]; then
+  CMD+=(--server "$SERVER_URL")
+else
+  CMD+=(--host "$SERVER_HOST" --port "$SERVER_PORT")
+fi
+
+CMD+=(--cam-names)
 for cam_name in $CAM_NAMES; do
   CMD+=("$cam_name")
 done

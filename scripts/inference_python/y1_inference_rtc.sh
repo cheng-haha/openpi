@@ -7,9 +7,10 @@ cd "${SCRIPT_DIR}"
 # source ~/miniconda3/etc/profile.d/conda.sh
 # conda activate openpi
 
-HOST="127.0.0.1"
-PORT="8000"
-PROMPT="Grab the black electrical tape from the left plane to the right plane"
+SERVER_URL="${SERVER_URL:-}"
+HOST="${HOST:-127.0.0.1}"
+PORT="${PORT:-8000}"
+PROMPT="${PROMPT:-stack bowls then place in basket}"
 CAMERA_TYPE="v4l2"
 CAMERA_NAMES=("cam_high" "cam_right_wrist" "cam_left_wrist")
 CONTROL_FREQUENCY="30"
@@ -39,8 +40,6 @@ INIT_STATE=""
 
 CMD=(
   uv run python y1_openpi_inference_rtc.py
-  --host "${HOST}"
-  --port "${PORT}"
   --prompt "${PROMPT}"
   --camera_type "${CAMERA_TYPE}"
   --camera_names "${CAMERA_NAMES[@]}"
@@ -58,6 +57,12 @@ CMD=(
   --rtc_execute_horizon "${RTC_EXECUTE_HORIZON}"
   --rtc_max_guidance_weight "${RTC_MAX_GUIDANCE_WEIGHT}"
 )
+
+if [[ -n "${SERVER_URL}" ]]; then
+  CMD+=(--server "${SERVER_URL}")
+else
+  CMD+=(--host "${HOST}" --port "${PORT}")
+fi
 
 if [[ "${SINGLE_ARM}" == "true" ]]; then
   CMD+=(--single_arm)
@@ -86,7 +91,11 @@ if [[ -n "${INIT_STATE}" ]]; then
 fi
 
 echo "[INFO] Starting Y1 RTC inference"
-echo "[INFO] HOST=${HOST}:${PORT}"
+if [[ -n "${SERVER_URL}" ]]; then
+  echo "[INFO] SERVER_URL=${SERVER_URL}"
+else
+  echo "[INFO] HOST=${HOST}:${PORT}"
+fi
 echo "[INFO] PROMPT=${PROMPT}"
 echo "[INFO] CAMERA_TYPE=${CAMERA_TYPE}"
 echo "[INFO] CAMERA_NAMES=${CAMERA_NAMES[*]}"

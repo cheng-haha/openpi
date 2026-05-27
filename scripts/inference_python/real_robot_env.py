@@ -32,8 +32,9 @@ DEFAULT_ROS2_CAMERA_TOPICS = {
 }
 
 DEFAULT_ARM_CAN_IDS = {
-    "left_arm": "can0",
-    "right_arm": "can1",
+    # Current Y1 udev mapping: can0 is the physical right arm, can1 is the physical left arm.
+    "left_arm": "can1",
+    "right_arm": "can0",
 }
 
 

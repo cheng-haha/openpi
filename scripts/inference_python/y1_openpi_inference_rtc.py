@@ -8,8 +8,11 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
+from urllib.parse import urlparse
+from urllib.parse import urlunparse
 
 import numpy as np
+from openpi_client import image_tools
 from openpi_client import websocket_client_policy
 
 FILE_DIR = Path(__file__).resolve().parent
@@ -22,6 +25,10 @@ for path in (FILE_DIR, COMMON_DIR, COMMON_ENV_DIR):
     if path_str not in sys.path:
         sys.path.insert(0, path_str)
 
+from real_robot_env import DEFAULT_ARM_CAN_IDS
+from real_robot_env import DEFAULT_CAMERA_SERIALS
+from real_robot_env import DEFAULT_ROS2_CAMERA_TOPICS
+from real_robot_env import DEFAULT_V4L2_CAMERA_DEVICES
 from real_robot_env import RealRobotEnv
 
 
@@ -132,10 +139,15 @@ def install_signal_handler() -> None:
 def add_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--server", default=None, help="Optional ws://, wss://, http://, or https:// forwarded URL.")
     parser.add_argument("--prompt", default="fold the towel")
     parser.add_argument("--single_arm", action="store_true")
-    parser.add_argument("--camera_type", choices=["v4l2", "orbbec"], default="v4l2")
+    parser.add_argument("--camera_type", choices=["v4l2", "orbbec", "ros2"], default="v4l2")
     parser.add_argument("--camera_names", nargs="+", default=DEFAULT_CAMERA_NAMES)
+    parser.add_argument("--camera_devices", nargs="*", default=None, help="Optional cam_name=/dev/videoX pairs.")
+    parser.add_argument("--camera_serials", nargs="*", default=None, help="Optional cam_name=serial pairs.")
+    parser.add_argument("--camera_topics", nargs="*", default=None, help="Optional cam_name=/ros/topic pairs.")
+    parser.add_argument("--arm_can_ids", nargs="*", default=None, help="Optional arm_name=canX pairs.")
     parser.add_argument("--visual", action="store_true")
     parser.add_argument("--visual_fps", type=float, default=30.0)
     parser.add_argument("--control_frequency", type=float, default=30.0)
@@ -143,6 +155,9 @@ def add_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--chunk_size", type=int, default=50)
     parser.add_argument("--max_publish_step", type=int, default=10000000)
     parser.add_argument("--init_state", nargs="*", type=float, help="Optional 7D/14D init state")
+    parser.add_argument("--image_height", type=int, default=224)
+    parser.add_argument("--image_width", type=int, default=224)
+    parser.add_argument("--wait_for_enter", action="store_true")
     parser.add_argument("--interpolation", action="store_true")
     parser.add_argument("--interp_steps", type=int, default=10)
     parser.add_argument("--interp_frequency", type=float, default=300.0)
@@ -157,6 +172,37 @@ def add_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     return parser
 
 
+def parse_kv_pairs(raw_pairs: list[str] | None) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for pair in raw_pairs or []:
+        if "=" not in pair:
+            raise ValueError(f"Invalid KEY=VALUE pair: {pair}")
+        key, value = pair.split("=", 1)
+        values[key] = value
+    return values
+
+
+def merge_kv_defaults(defaults: dict[str, str], raw_pairs: list[str] | None) -> dict[str, str]:
+    values = dict(defaults)
+    values.update(parse_kv_pairs(raw_pairs))
+    return values
+
+
+def as_websocket_url(address: str) -> str:
+    parsed = urlparse(address)
+    if parsed.scheme == "http":
+        return urlunparse(parsed._replace(scheme="ws"))
+    if parsed.scheme == "https":
+        return urlunparse(parsed._replace(scheme="wss"))
+    return address
+
+
+def make_policy(args: argparse.Namespace) -> websocket_client_policy.WebsocketClientPolicy:
+    if args.server:
+        return websocket_client_policy.WebsocketClientPolicy(host=as_websocket_url(args.server), port=None)
+    return websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
+
+
 def copy_observation(observation: dict[str, object] | None) -> dict[str, object] | None:
     if observation is None:
         return None
@@ -166,6 +212,31 @@ def copy_observation(observation: dict[str, object] | None) -> dict[str, object]
         name: np.asarray(image, dtype=np.uint8).copy() for name, image in dict(images).items()
     }
     return copied
+
+
+def prepare_policy_observation(
+    observation: dict[str, object],
+    *,
+    image_height: int,
+    image_width: int,
+) -> dict[str, object]:
+    images: dict[str, np.ndarray] = {}
+    for cam_name, image in dict(observation.get("images", {})).items():
+        arr = np.asarray(image)
+        if arr.ndim != 3:
+            raise ValueError(f"Expected 3D image for {cam_name}, got shape {arr.shape}")
+        if arr.shape[0] in (1, 3, 4):
+            hwc_image = np.transpose(arr, (1, 2, 0))
+        else:
+            hwc_image = arr
+        resized = image_tools.resize_with_pad(hwc_image, image_height, image_width)
+        resized = image_tools.convert_to_uint8(resized)
+        images[cam_name] = np.transpose(resized, (2, 0, 1))
+
+    return {
+        "state": np.asarray(observation["state"], dtype=np.float32),
+        "images": images,
+    }
 
 
 def set_latest_observation(observation: dict[str, object] | None) -> None:
@@ -210,10 +281,12 @@ def build_payload(
     execute_horizon: int,
     rtc_mask_prefix_delay: bool,
     rtc_max_guidance_weight: float,
+    image_height: int,
+    image_width: int,
 ) -> dict[str, object]:
-    payload = copy_observation(observation)
-    if payload is None:
+    if observation is None:
         raise ValueError("Observation is required for RTC payload.")
+    payload = prepare_policy_observation(observation, image_height=image_height, image_width=image_width)
     payload["prompt"] = prompt
     payload["enable_rtc"] = True
     payload["execute_horizon"] = int(max(1, execute_horizon))
@@ -235,6 +308,8 @@ def inference_fn(
     execute_horizon: int,
     rtc_mask_prefix_delay: bool,
     rtc_max_guidance_weight: float,
+    image_height: int,
+    image_width: int,
 ):
     payload = build_payload(
         observation,
@@ -244,6 +319,8 @@ def inference_fn(
         execute_horizon=execute_horizon,
         rtc_mask_prefix_delay=rtc_mask_prefix_delay,
         rtc_max_guidance_weight=rtc_max_guidance_weight,
+        image_height=image_height,
+        image_width=image_width,
     )
 
     infer_start = time.perf_counter()
@@ -318,6 +395,8 @@ def inference_thread_fn(policy, args, execute_horizon: int, stream_buffer: Strea
                 execute_horizon=execute_horizon,
                 rtc_mask_prefix_delay=args.rtc_mask_prefix_delay,
                 rtc_max_guidance_weight=args.rtc_max_guidance_weight,
+                image_height=args.image_height,
+                image_width=args.image_width,
             )
         except Exception as exc:
             print(f"[WARN] RTC inference failed: {exc}")
@@ -327,7 +406,7 @@ def inference_thread_fn(policy, args, execute_horizon: int, stream_buffer: Strea
                 shutdown_event.wait(1.0)
                 if shutdown_event.is_set():
                     break
-                policy = websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
+                policy = make_policy(args)
                 print("[client] reconnected to policy server")
             except Exception as reconnect_exc:
                 print(f"[WARN] RTC reconnect failed: {reconnect_exc}")
@@ -367,6 +446,10 @@ def main():
         visual=args.visual,
         visual_fps=args.visual_fps,
         camera_type=args.camera_type,
+        camera_devices=merge_kv_defaults(DEFAULT_V4L2_CAMERA_DEVICES, args.camera_devices),
+        camera_serials=merge_kv_defaults(DEFAULT_CAMERA_SERIALS, args.camera_serials),
+        camera_topics=merge_kv_defaults(DEFAULT_ROS2_CAMERA_TOPICS, args.camera_topics),
+        arm_can_ids=merge_kv_defaults(DEFAULT_ARM_CAN_IDS, args.arm_can_ids),
     )
     runtime.set_up()
     if args.init_state is not None:
@@ -377,11 +460,14 @@ def main():
         runtime.step(target)
         time.sleep(3.0)
 
-    policy = websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
+    policy = make_policy(args)
     print("Server metadata:", policy.get_server_metadata())
 
     execute_horizon = args.chunk_size if args.rtc_execute_horizon is None else args.rtc_execute_horizon
     execute_horizon = max(1, min(int(execute_horizon), int(args.rtc_model_chunk_size)))
+
+    if args.wait_for_enter:
+        input("Press key [enter] to start RTC remote inference: ")
 
     state_dim = 7 if args.single_arm else 14
     stream_buffer = StreamActionBuffer(
@@ -415,6 +501,8 @@ def main():
                     execute_horizon=execute_horizon,
                     rtc_mask_prefix_delay=args.rtc_mask_prefix_delay,
                     rtc_max_guidance_weight=args.rtc_max_guidance_weight,
+                    image_height=args.image_height,
+                    image_width=args.image_width,
                 )
             )
             print("Warmup done.")
